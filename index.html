@@ -32,7 +32,15 @@
         </div>
         <div class="menu-content">
             <aside class="menu-roster-panel">
-                <input id="menu-search" type="text" placeholder="Search patients...">
+                <div style="display:flex; gap:0.5rem; margin-bottom:0.8rem;">
+                    <input id="menu-search" type="text" placeholder="Search patients..." style="margin:0; flex:1;">
+                    <select id="menu-sort" style="padding:0 0.5rem; background:#0f0f0f; border:1px solid #444; color:#fff; font-family:'Space Mono', monospace; cursor:pointer;" aria-label="Sort Roster">
+                        <option value="default">Sort: Session</option>
+                        <option value="name">Sort: Name</option>
+                        <option value="healed">Sort: Healed</option>
+                        <option value="locked">Sort: Locked</option>
+                    </select>
+                </div>
                 <div id="menu-roster-grid" class="roster-grid"></div>
             </aside>
         </div>
@@ -49,9 +57,9 @@
             <div class="cot-bar">
               <div id="cot-avatars" class="cot-avatars" title="Co‑therapy online"></div>
               <div class="cot-actions">
-                <button class="psf-btn" onclick="game.sendReaction('👍')">👍</button>
-                <button class="psf-btn" onclick="game.sendReaction('💡')">💡</button>
-                <button class="psf-btn" onclick="game.sendReaction('❤️')">❤️</button>
+                <button class="psf-btn" aria-label="Send Thumbs Up" onclick="game.sendReaction('👍')">👍</button>
+                <button class="psf-btn" aria-label="Send Insight Idea" onclick="game.sendReaction('💡')">💡</button>
+                <button class="psf-btn" aria-label="Send Heart" onclick="game.sendReaction('❤️')">❤️</button>
               </div>
             </div>
             <div id="cot-insights" class="cot-insights" aria-live="polite" title="Shared session insights"></div>
@@ -68,7 +76,7 @@
                 <div id="patient-bio-window" class="patient-bio-window">
                     <div class="pbw-header">
                         <span>Patient Dossier</span>
-                        <button id="pbw-close-btn" class="psf-btn">✕</button>
+                        <button id="pbw-close-btn" class="psf-btn" aria-label="Close Dossier">✕</button>
                     </div>
                     <div id="pbw-content" class="pbw-content"></div>
                 </div>
@@ -366,6 +374,14 @@
                 </label>
             </div>
             <div class="settings-group">
+                <label for="setting-sfx-vol" class="settings-label">SFX Volume</label>
+                <input type="range" id="setting-sfx-vol" min="0" max="1" step="0.1">
+            </div>
+            <div class="settings-group">
+                <label for="setting-music-vol" class="settings-label">Radio Volume</label>
+                <input type="range" id="setting-music-vol" min="0" max="100" step="5">
+            </div>
+            <div class="settings-group">
                 <label for="setting-dialogue-scale" class="settings-label">Dialogue Text Size</label>
                 <input type="range" id="setting-dialogue-scale" min="0.9" max="1.6" step="0.1">
                 <div class="settings-hint">Applies to therapy dialogue and inputs.</div>
@@ -420,8 +436,8 @@
         <div class="psf-header">
             <span>Path to Self</span>
             <div style="display:flex;gap:0.4rem;align-items:center;">
-                <button id="psf-toggle-btn" class="psf-btn" title="Maximize">⤢</button>
-                <button id="psf-close-btn" class="psf-btn" title="Close">✕</button>
+                <button id="psf-toggle-btn" class="psf-btn" title="Maximize" aria-label="Maximize Window">⤢</button>
+                <button id="psf-close-btn" class="psf-btn" title="Close" aria-label="Close Window">✕</button>
             </div>
         </div>
         <iframe id="path-self-float-iframe" src="" allow="autoplay; encrypted-media" allowfullscreen></iframe>
