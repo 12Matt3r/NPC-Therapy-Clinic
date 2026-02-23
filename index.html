@@ -267,17 +267,32 @@
         </div>
         <div class="creator-container">
           <div class="creator-form">
-            <h3>Import NPC (JSON)</h3>
-            <p>Paste a JSON object with keys: name, origin, crisis, image (optional), opening_statement (optional)</p>
-            <textarea id="json-npc-input" class="modal-input" placeholder='{"name":"...", "origin":"...", "crisis":"...", "image":"https://..."}'></textarea>
-            <div style="font-size:.85rem;opacity:.7;margin-top:-.5rem;margin-bottom:.5rem;">Tip: You can also drop a .json file onto the box above.</div>
-            <label style="font-size:.9rem;opacity:.8;">NPC Portrait (optional):</label>
-            <input type="file" id="json-npc-image-upload" class="modal-input" accept="image/*">
-            <label style="font-size:.9rem;opacity:.8;">Card Photo (optional):</label>
-            <input type="file" id="json-card-image-upload" class="modal-input" accept="image/*">
-            <button class="btn" id="json-npc-import-btn">IMPORT NPC</button>
+            <h3>AI Generation</h3>
+            <p>Describe your character (or leave blank for random):</p>
+            <textarea id="creator-prompt" class="modal-input" placeholder="e.g. A sad robot who lost its charging cable..."></textarea>
+            <div class="creator-buttons">
+                <button class="btn" id="creator-generate-btn">GENERATE NEW</button>
+                <button class="btn" id="creator-randomize-btn">RANDOMIZE</button>
+            </div>
+
+            <div class="creator-divider">--- OR IMPORT JSON ---</div>
+
+            <div class="import-section">
+                <textarea id="json-npc-input" class="modal-input small" placeholder='Paste JSON here...'></textarea>
+                <button class="btn" id="json-npc-import-btn">IMPORT NPC</button>
+            </div>
           </div>
-          <iframe id="creator-iframe" src="https://npc-therapy-core-engine--sofakingsadboi.on.websim.com/" style="width:100%;height:100%;border:0;"></iframe>
+
+          <div class="creator-preview">
+            <h3>Preview</h3>
+            <div id="creator-loader" style="display:none; text-align:center; padding:2rem;">
+                <div class="spinner"></div>
+                <p>Constructing digital psyche...</p>
+            </div>
+            <div id="creator-preview-content">
+                <p class="placeholder-text">Generated character will appear here.</p>
+            </div>
+          </div>
         </div>
       </div>
     </div>

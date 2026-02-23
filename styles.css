@@ -1047,6 +1047,8 @@ body {
 .choice-btn:hover {
     background: #fff;
     color: #000;
+    transform: translateX(5px);
+    box-shadow: -2px 2px 0 rgba(100, 255, 255, 0.5);
 }
 
 .player-input-container {
@@ -1180,6 +1182,22 @@ body {
     display: flex;
     flex-direction: column;
     gap: 1rem;
+}
+
+.creator-buttons {
+    display: flex;
+    gap: 1rem;
+}
+
+.import-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.modal-input.small {
+    height: 100px;
+    font-size: 0.8rem;
 }
 
 .creator-form h3 {
