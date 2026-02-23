@@ -23,7 +23,12 @@ body {
 
 .screen.active {
     display: flex;
-    animation: fadeIn 0.3s ease-in;
+    opacity: 1;
+    transition: opacity 0.3s ease-in;
+}
+.screen.fading-out {
+    opacity: 0;
+    pointer-events: none;
 }
 /* Global dialogue scale variable (default 1) */
 :root { --dialogue-scale: 1; }
