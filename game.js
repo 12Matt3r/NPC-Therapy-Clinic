@@ -2,7 +2,18 @@ import { loadNpcDatabase } from './npc-data.js';
 
 // Enhanced websim shim with 11 Labs TTS
 const websim = (window.websim = window.websim || {
-  chat: { completions: { create: async ({ json }) => ({ content: json ? '[]' : '...' }) } },
+  chat: {
+    completions: {
+      create: async ({ json }) => ({
+        content: json ? JSON.stringify({
+          name: "Glitch Entity",
+          origin: "Corrupted Sector",
+          crisis: "I exist only as a placeholder.",
+          image_prompt: "glitch art abstract portrait"
+        }) : "This is a placeholder response."
+      })
+    }
+  },
   imageGen: async () => ({ url: null }),
   // Removed recursive override; use native window.websim.textToSpeech if available
   upload: async (file) => {
@@ -311,6 +322,7 @@ const game = {
   permissionsRequested: false,
   permissionRequestInProgress: false,
   textOnlyMode: false,
+  wordAssociationMode: false,
 
   showLoader() { document.getElementById('global-loader').style.display = 'flex'; },
   hideLoader() { document.getElementById('global-loader').style.display = 'none'; },
@@ -617,8 +629,16 @@ const game = {
       } else contBtn.style.display = 'none';
     }
     window.addEventListener('keydown', (e) => {
+      // Check if user is typing in an input field
+      const tagName = document.activeElement ? document.activeElement.tagName.toLowerCase() : '';
+      const isInput = tagName === 'input' || tagName === 'textarea';
+
       if (e.key === 'Escape') { const activeModal = document.querySelector('.modal.active'); if (activeModal) this.closeModal(activeModal.id); }
-      else if (e.key.toLowerCase() === 'j') this.showJournal();
+
+      // If typing in an input field, ignore other shortcuts
+      if (isInput) return;
+
+      if (e.key.toLowerCase() === 'j') this.showJournal();
       else if (e.key.toLowerCase() === 'c') this.showCredits();
       else if (e.key.toLowerCase() === 'r') this.openRadio();
       else if (e.key.toLowerCase() === 'm') this.showScreen('main-menu');
@@ -836,6 +856,7 @@ const game = {
       this.ttsAudio.pause(); 
       this.ttsAudio.currentTime = 0; 
     }
+    this.wordAssociationMode = false;
     this.ttsQueue = []; // clear pending speech
     this.speaking = false;
     this.showSpeakingIndicator(false);
@@ -1088,7 +1109,13 @@ const game = {
       if (this.settings.tts && !this.textOnlyMode) {
         this.speak(responseText, this.currentNPC.id);
       }
-      this.typewriter(dialogueText, responseText, () => { typingIndicator.style.display = 'none'; playerInputArea.style.display = 'flex'; document.getElementById('player-response').focus(); this.generateQuickReplies(); });
+      this.typewriter(dialogueText, responseText, () => {
+        typingIndicator.style.display = 'none';
+        playerInputArea.style.display = 'flex';
+        document.getElementById('player-response').focus();
+        this.generateQuickReplies();
+        if (this.turnCount >= 2) this.addRorschachChoice();
+      });
     } catch (error) {
       console.error("AI generation failed, using fallback.", error);
       const fallbackText = "I... I don't know what to say. The static is loud today.";
@@ -1135,8 +1162,68 @@ const game = {
     rorschachBtn.className = 'choice-btn';
     rorschachBtn.textContent = "[Use Rorschach Test]";
     rorschachBtn.onclick = () => { this.audioPlayer.playSound('confirm'); this.startRorschachTest(); choicesContainer.innerHTML = ''; };
+
+    const wordAssocBtn = document.createElement('button');
+    wordAssocBtn.className = 'choice-btn';
+    wordAssocBtn.textContent = "[Word Association]";
+    wordAssocBtn.onclick = () => { this.audioPlayer.playSound('confirm'); this.startWordAssociation(); choicesContainer.innerHTML = ''; };
+
     choicesContainer.innerHTML = '';
     choicesContainer.appendChild(rorschachBtn);
+    choicesContainer.appendChild(wordAssocBtn);
+  },
+
+  startWordAssociation() {
+    const dialogueText = document.getElementById('dialogue');
+    const choicesContainer = document.getElementById('choices');
+    const playerInputArea = document.getElementById('player-input-area');
+    const input = document.getElementById('player-response');
+
+    choicesContainer.innerHTML = '';
+    this.typewriter(dialogueText, "Word Association. You say a word, and I'll say the first thing that comes to my mind. Go ahead.");
+
+    this.wordAssociationMode = true;
+    input.placeholder = "Type a word for association...";
+    setTimeout(() => input.focus(), 100);
+  },
+
+  async handleWordAssociation(word) {
+    const input = document.getElementById('player-response');
+    input.value = '';
+    input.placeholder = 'Type your response...';
+    this.conversationHistory.push({ role: 'user', content: `[Word Association] ${word}` });
+
+    const dialogueText = document.getElementById('dialogue');
+    dialogueText.textContent = '...';
+
+    try {
+        const systemPrompt = `You are playing Word Association. The therapist said "${word}". Respond with a single word or short phrase (max 4 words) that instantly comes to your mind, reflecting your hidden crisis/backstory. Then, in parentheses, briefly explain why. Example: "Darkness (It never ends)".`;
+
+        const completion = await websim.chat.completions.create({
+            messages: [
+                { role: "system", content: `You are ${this.currentNPC.name}. Crisis: ${this.currentNPC.crisis}.` },
+                { role: "system", content: systemPrompt }
+            ]
+        });
+
+        const response = completion.content;
+        this.conversationHistory.push({ role: 'assistant', content: response });
+        if (this.settings.tts && !this.textOnlyMode) {
+            this.speak(response, this.currentNPC.id);
+        }
+
+        this.typewriter(dialogueText, response, () => {
+            this.wordAssociationMode = false;
+            this.bondScores[this.currentNPC.id] = Math.min(10, (this.bondScores[this.currentNPC.id] || 0) + 1);
+            this.updateTrustUI();
+            this.generateQuickReplies();
+            if (this.turnCount >= 2) this.addRorschachChoice();
+        });
+    } catch (e) {
+        console.error(e);
+        this.wordAssociationMode = false;
+        this.typewriter(dialogueText, "I... I can't do this right now.");
+    }
   },
 
   startRorschachTest() {
@@ -1269,11 +1356,16 @@ Provide a brief, one-paragraph therapeutic analysis connecting their interpretat
     if (this.speechListening) {
       this.stopSpeechRecognition();
     }
+
+    if (this.wordAssociationMode) {
+      this.handleWordAssociation(text);
+      return;
+    }
     
     const qr = document.getElementById('quick-replies'); if (qr) qr.innerHTML = '';
     this.conversationHistory.push({ role: 'user', content: text });
     input.value = ''; this.turnCount++;
-    if (this.turnCount === 2) this.addRorschachChoice();
+    // Removed: if (this.turnCount === 2) this.addRorschachChoice(); - Moved to NPC response callback
     if (this.turnCount === 3 || this.turnCount === 6) this.generateThoughtImage();
     if (this.turnCount >= 3 || this.bondScores[this.currentNPC.id] >= 3) document.getElementById('conclude-session-btn').style.display = 'block';
     this.updateBondWithAI(text).then(() => {
@@ -1449,6 +1541,7 @@ Example: {"breakthrough": true, "summary": "The patient has accepted that their 
     this.ttsQueue = [];
     this.speaking = false;
     this.showSpeakingIndicator(false);
+    this.wordAssociationMode = false;
     
     // Stop speech recognition if active
     if (this.speechListening) {
@@ -2354,12 +2447,20 @@ Respond with only a JSON object: {"bond_change": number, "reason": "A brief expl
     if (input) input.addEventListener('keydown', (e) => this.handleCmdkKeydown(e));
 
     window.addEventListener('keydown', (e) => {
+      // Check if user is typing in an input field
+      const tagName = document.activeElement ? document.activeElement.tagName.toLowerCase() : '';
+      const isInput = tagName === 'input' || tagName === 'textarea';
+
       // Ctrl/Cmd+K opens palette
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         this.openCommandPalette();
         return;
       }
+
+      // If typing in an input field, ignore single-key shortcuts
+      if (isInput) return;
+
       // Help modal on '?'
       if (e.key === '?' || (e.shiftKey && e.key === '/')) {
         e.preventDefault();
