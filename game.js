@@ -1,262 +1,16 @@
 import { loadNpcDatabase } from './npc-data.js';
+import { AudioPlayer, SpeechRecognitionSystem, WebSpeechTTS } from './js/modules/audio.js';
+import { initWebsimShim } from './js/modules/shim.js';
+import {
+  sleep, withTimeout, debounce, preloadBackground, loadImage,
+  fetchFinalUrlWithTimeout, attachImageLoadingEffects, sanitizeInput
+} from './js/modules/utils.js';
 
-// Enhanced websim shim with 11 Labs TTS
-const websim = (window.websim = window.websim || {
-  chat: {
-    completions: {
-      create: async ({ json }) => ({
-        content: json ? JSON.stringify({
-          name: "Glitch Entity",
-          origin: "Corrupted Sector",
-          crisis: "I exist only as a placeholder.",
-          image_prompt: "glitch art abstract portrait"
-        }) : "This is a placeholder response."
-      })
-    }
-  },
-  imageGen: async () => ({ url: null }),
-  // Removed recursive override; use native window.websim.textToSpeech if available
-  upload: async (file) => {
-    // Fallback: create a local blob URL so mobile uploads work without websim backend
-    return URL.createObjectURL(file);
-  },
-});
+// Initialize Shim
+const websim = initWebsimShim();
 
 // Admin password for edit mode
 const ADMIN_PASSWORD = 'Oliver4Games';
-
-// --- Simple Audio Player for UI sounds ---
-class AudioPlayer {
-  constructor() {
-    this.enabled = true;
-    this.sounds = {
-      confirm: new Audio('/button-press.mp3'),
-      error: new Audio('/error.mp3'),
-    };
-    Object.values(this.sounds).forEach(a => {
-      a.volume = 0.9;
-      a.preload = 'auto';
-    });
-  }
-  playSound(name) {
-    if (!this.enabled) return;
-    const snd = this.sounds[name];
-    if (!snd) return;
-    try {
-      snd.currentTime = 0;
-      snd.play().catch(() => {});
-    } catch (_) {}
-  }
-  setEnabled(on) {
-    this.enabled = !!on;
-  }
-}
-
-// --- Speech Recognition System ---
-class SpeechRecognitionSystem {
-  constructor() {
-    this.recognition = null;
-    this.isListening = false;
-    this.supported = 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;
-    
-    if (this.supported) {
-      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-      this.recognition = new SpeechRecognition();
-      this.setupRecognition();
-    }
-  }
-
-  setupRecognition() {
-    this.recognition.continuous = false;
-    this.recognition.interimResults = true;
-    this.recognition.lang = 'en-US';
-    this.recognition.maxAlternatives = 1;
-  }
-
-  start(onResult, onError, onStart) {
-    if (!this.supported) {
-      onError(new Error('Speech recognition not supported in this browser'));
-      return;
-    }
-
-    if (this.isListening) {
-      this.stop();
-    }
-
-    this.recognition.onresult = (event) => {
-      let interimTranscript = '';
-      let finalTranscript = '';
-
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          finalTranscript += transcript;
-        } else {
-          interimTranscript += transcript;
-        }
-      }
-
-      onResult(finalTranscript || interimTranscript, finalTranscript);
-    };
-
-    this.recognition.onerror = (event) => {
-      this.isListening = false;
-      onError(new Error(event.error));
-    };
-
-    this.recognition.onstart = () => {
-      this.isListening = true;
-      onStart();
-    };
-
-    this.recognition.onend = () => {
-      this.isListening = false;
-    };
-
-    try {
-      this.recognition.start();
-    } catch (error) {
-      onError(error);
-    }
-  }
-
-  stop() {
-    if (this.recognition && this.isListening) {
-      this.recognition.stop();
-      this.isListening = false;
-    }
-  }
-}
-
-// --- Web Speech API TTS ---
-class WebSpeechTTS {
-  constructor() {
-    this.synth = window.speechSynthesis;
-    this.voices = [];
-    this.voicesLoaded = false;
-    this.loadVoices();
-  }
-
-  loadVoices() {
-    if (this.synth) {
-      this.voices = this.synth.getVoices();
-      if (this.voices.length > 0) {
-        this.voicesLoaded = true;
-      } else {
-        // Load voices asynchronously
-        window.speechSynthesis.onvoiceschanged = () => {
-          this.voices = this.synth.getVoices();
-          this.voicesLoaded = true;
-        };
-      }
-    }
-  }
-
-  getVoiceForName(voiceName) {
-    if (!this.voicesLoaded || !this.voices.length) return null;
-    
-    // Try to find exact match first
-    let voice = this.voices.find(v => v.name === voiceName);
-    
-    // If not found, try partial match
-    if (!voice && voiceName) {
-      voice = this.voices.find(v => v.name.toLowerCase().includes(voiceName.toLowerCase()));
-    }
-    
-    // Fallback to default
-    if (!voice) {
-      voice = this.voices.find(v => v.default) || this.voices[0];
-    }
-    
-    return voice;
-  }
-
-  async speak(text, voiceName) {
-    return new Promise((resolve, reject) => {
-      if (!this.synth) {
-        reject(new Error('Speech synthesis not supported'));
-        return;
-      }
-
-      // Cancel any ongoing speech
-      this.synth.cancel();
-
-      const utterance = new SpeechSynthesisUtterance(text);
-      
-      const voice = this.getVoiceForName(voiceName);
-      if (voice) {
-        utterance.voice = voice;
-      }
-
-      utterance.rate = 0.9;
-      utterance.pitch = 1.0;
-      utterance.volume = 1.0;
-
-      utterance.onend = () => resolve();
-      utterance.onerror = (event) => reject(new Error(event.error));
-
-      this.synth.speak(utterance);
-    });
-  }
-}
-
-function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
-
-// Add: race helper with timeout
-async function withTimeout(promise, ms) {
-  let t; const timeout = new Promise((_, rej) => t = setTimeout(() => rej(new Error('timeout')), ms));
-  try { const res = await Promise.race([promise, timeout]); clearTimeout(t); return res; } finally { clearTimeout(t); }
-}
-
-/* Add: small utility to debounce frequent UI updates */
-function debounce(fn, delay = 200) {
-  let t;
-  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), delay); };
-}
-
-async function preloadBackground(url) {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => resolve(true);
-    img.onerror = () => resolve(false);
-    img.src = url;
-  });
-}
-
-async function loadImage(url, timeout = 15000) {
-  return new Promise((resolve) => {
-    const img = new Image();
-    let done = false;
-    const t = setTimeout(() => { if (!done) { done = true; resolve(false); img.src = ''; } }, timeout);
-    img.onload = () => { if (!done) { done = true; clearTimeout(t); resolve(true); } };
-    img.onerror = () => { if (!done) { done = true; clearTimeout(t); resolve(false); } };
-    img.src = url;
-  });
-}
-
-async function fetchFinalUrlWithTimeout(promptWithSeed, maxAttempts = 25) {
-  try {
-    const result = await withTimeout(fetchFinalUrl(promptWithSeed, maxAttempts), 12000);
-    return result;
-  } catch (_) {
-    return null;
-  }
-}
-
-// --- End Image Helpers ---
-
-// Add: in-flight image promise de-duplication cache
-const inFlightImages = new Map();
-
-// Add: image loading effects helper
-function attachImageLoadingEffects(img) {
-  if (!img) return;
-  img.classList.add('loading', 'skeleton');
-  const onLoad = () => { img.classList.remove('loading', 'skeleton'); img.classList.add('loaded'); img.removeEventListener('load', onLoad); };
-  img.addEventListener('load', onLoad);
-  img.addEventListener('error', () => { img.classList.remove('loading'); });
-  if (img.complete) onLoad();
-}
 
 const game = {
   npcs: [],
@@ -300,7 +54,7 @@ const game = {
   generatingResponse: false,
   _menuRenderScheduled: false,
   _skipTyping: false,
-  settings: { tts: true, stt: false, reduceMotion: false, dialogueScale: 1 },
+  settings: { tts: true, stt: false, reduceMotion: false, dialogueScale: 1, sfxVolume: 0.9, musicVolume: 50 },
   _autosaveTimer: null,
   room: null,
   // Add: per-NPC session notes with breakthrough flag
@@ -324,7 +78,12 @@ const game = {
   textOnlyMode: false,
   wordAssociationMode: false,
 
-  showLoader() { document.getElementById('global-loader').style.display = 'flex'; },
+  showLoader(text = "Processing...") {
+    const el = document.getElementById('global-loader');
+    const txt = el.querySelector('.loader-text');
+    if (txt) txt.textContent = text;
+    el.style.display = 'flex';
+  },
   hideLoader() { document.getElementById('global-loader').style.display = 'none'; },
 
   // Remove old single-provider pollinations fetch in favor of unified pipeline, but keep name for compatibility
@@ -594,17 +353,23 @@ const game = {
     const bioCloseBtn = document.getElementById('pbw-close-btn'); if (bioCloseBtn) bioCloseBtn.addEventListener('click', () => this.togglePatientBio(false));
     
     const menuSearch = document.getElementById('menu-search');
-    if (menuSearch) {
+    const menuSort = document.getElementById('menu-sort');
+
+    if (menuSearch || menuSort) {
       const debouncedMenu = debounce(() => this.scheduleUpdateMenuRosterView(), 200);
-      menuSearch.addEventListener('input', debouncedMenu);
-      // Enter to start first unlocked match
-      menuSearch.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          const items = this._lastMenuItems || [];
-          const match = items.find(({ index }) => this.unlockedNPCs.has(index));
-          if (match) this.startSession(match.index);
-        }
-      });
+      if (menuSearch) {
+        menuSearch.addEventListener('input', debouncedMenu);
+        menuSearch.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            const items = this._lastMenuItems || [];
+            const match = items.find(({ index }) => this.unlockedNPCs.has(index));
+            if (match) this.startSession(match.index);
+          }
+        });
+      }
+      if (menuSort) {
+        menuSort.addEventListener('change', () => this.scheduleUpdateMenuRosterView());
+      }
       this.scheduleUpdateMenuRosterView();
     }
     
@@ -1349,7 +1114,7 @@ Provide a brief, one-paragraph therapeutic analysis connecting their interpretat
 
   sendPlayerResponse() {
     const input = document.getElementById('player-response');
-    const text = input.value.trim();
+    const text = sanitizeInput(input.value.trim());
     if (!text) { this.audioPlayer.playSound('error'); return; }
     
     // Stop speech recognition if active
@@ -1597,16 +1362,19 @@ Example: {"breakthrough": true, "summary": "The patient has accepted that their 
   },
 
   async generateCustomNpc() {
-    const prompt = document.getElementById('creator-prompt').value.trim();
+    const prompt = sanitizeInput(document.getElementById('creator-prompt').value.trim());
     if (!prompt) { alert("Please provide a prompt for the new NPC."); this.audioPlayer.playSound('error'); return; }
     const loader = document.getElementById('creator-loader');
     const preview = document.getElementById('creator-preview-content');
     const generateBtn = document.getElementById('creator-generate-btn');
-    loader.style.display = 'block'; preview.innerHTML = ''; generateBtn.disabled = true; this.showLoader();
+    loader.style.display = 'block'; preview.innerHTML = ''; generateBtn.disabled = true;
+    this.showLoader("Constructing personality...");
     try {
       const systemPrompt = `Based on the user's prompt, generate a JSON object for a new NPC patient. The JSON must have these exact keys: "name" (a creative name), "origin" (the type of game they are from), "crisis" (a one-sentence existential crisis based on the prompt). User prompt: "${prompt}"`;
       const detailsCompletion = await websim.chat.completions.create({ messages: [{ role: "system", content: systemPrompt }], json: true });
       const npcDetails = JSON.parse(detailsCompletion.content);
+
+      this.showLoader("Imagining appearance...");
       let imageUrl = null;
       const base = npcDetails.image_prompt || `portrait of ${npcDetails.name} in therapy office`;
       const imgPrompt = `pixel art, therapy office portrait, ${base}, warm neutral palette, soft vignette, clean background, no UI text, no logos, consistent lighting, character centered, shoulder-up view`;
@@ -1624,11 +1392,14 @@ Example: {"breakthrough": true, "summary": "The patient has accepted that their 
     const loader = document.getElementById('creator-loader');
     const preview = document.getElementById('creator-preview-content');
     const randomizeBtn = document.getElementById('creator-randomize-btn');
-    loader.style.display = 'block'; preview.innerHTML = ''; randomizeBtn.disabled = true; this.showLoader();
+    loader.style.display = 'block'; preview.innerHTML = ''; randomizeBtn.disabled = true;
+    this.showLoader("Contacting the void...");
     try {
       const systemPrompt = `Generate a JSON object for a completely new, random NPC patient for a therapy game. The JSON must have these exact keys: "name" (a creative name), "origin" (the type of game they are from, e.g., 'Forgotten 90s Platformer', 'Obscure Puzzle Game'), "crisis" (a one-sentence existential crisis), and "image_prompt" (a concise prompt for a pixel art image of them in a therapy office). Be creative and melancholic.`;
       const detailsCompletion = await websim.chat.completions.create({ messages: [{ role: "system", content: systemPrompt }], json: true });
       const npcDetails = JSON.parse(detailsCompletion.content);
+
+      this.showLoader("Visualizing entity...");
       let imageUrl = null;
       const base = npcDetails.image_prompt || `portrait of ${npcDetails.name} in therapy office`;
       const imgPrompt = `pixel art, therapy office portrait, ${base}, warm neutral palette, soft vignette, clean background, no UI text, no logos, consistent lighting, character centered, shoulder-up view`;
@@ -1887,7 +1658,14 @@ Example: {"breakthrough": true, "summary": "The patient has accepted that their 
     try {
       this.ytPlayer = new YT.Player('radio-player', {
         events: {
-          'onReady': (event) => { try { event.target.setShuffle(true); event.target.playVideoAt(0); event.target.unMute(); } catch(e) { console.error("YT Player onReady event failed:", e); } },
+          'onReady': (event) => {
+            try {
+              event.target.setShuffle(true);
+              event.target.playVideoAt(0);
+              event.target.unMute();
+              event.target.setVolume(this.settings.musicVolume);
+            } catch(e) { console.error("YT Player onReady event failed:", e); }
+          },
           'onError': (event) => { console.error("YT Player Error:", event.data); }
         }
       });
@@ -1992,12 +1770,12 @@ Example: {"breakthrough": true, "summary": "The patient has accepted that their 
   },
 
   async saveCreditItem() {
-    const link = document.getElementById('credit-link-url').value.trim();
+    const link = sanitizeInput(document.getElementById('credit-link-url').value.trim());
     const fileInput = document.getElementById('credit-image-upload');
     const file = fileInput.files[0];
     let imageUrl;
     if (file) {
-      this.showLoader();
+      this.showLoader("Uploading image...");
       try { imageUrl = await websim.upload(file); }
       catch (error) { console.error('Error uploading file:', error); alert('File upload failed. Please try again.'); }
       finally { this.hideLoader(); }
@@ -2151,7 +1929,30 @@ Example: {"breakthrough": true, "summary": "The patient has accepted that their 
     });
     // Store last filtered items for Enter-to-start
     this._lastMenuItems = items;
-    items.sort((a,b)=>{ const af = a.npc.session==='Final Session'; const bf = b.npc.session==='Final Session'; if (af && !bf) return 1; if (!af && bf) return -1; const an = parseInt(a.npc.session.split(' ')[1]); const bn = parseInt(b.npc.session.split(' ')[1]); return (an - bn) || (a.index - b.index); });
+
+    const sortMode = document.getElementById('menu-sort')?.value || 'default';
+    items.sort((a,b) => {
+      if (sortMode === 'name') return a.npc.name.localeCompare(b.npc.name);
+      if (sortMode === 'healed') {
+        const hA = this.healedNPCs.has(a.index) ? 1 : 0;
+        const hB = this.healedNPCs.has(b.index) ? 1 : 0;
+        if (hA !== hB) return hB - hA; // Healed first
+      }
+      if (sortMode === 'locked') {
+        const lA = !this.unlockedNPCs.has(a.index) ? 1 : 0;
+        const lB = !this.unlockedNPCs.has(b.index) ? 1 : 0;
+        if (lA !== lB) return lB - lA; // Locked first
+      }
+      // Default: Session
+      const af = a.npc.session==='Final Session';
+      const bf = b.npc.session==='Final Session';
+      if (af && !bf) return 1;
+      if (!af && bf) return -1;
+      const an = parseInt(a.npc.session.split(' ')[1]) || 999;
+      const bn = parseInt(b.npc.session.split(' ')[1]) || 999;
+      return (an - bn) || (a.index - b.index);
+    });
+
     if (items.length === 0) { grid.innerHTML = '<p style="opacity:0.7;padding:0.5rem 0;">No matching patients.</p>'; }
     else {
       items.forEach(({ npc, index }) => {
@@ -2278,6 +2079,8 @@ Respond with only a JSON object: {"bond_change": number, "reason": "A brief expl
     const sttEl = document.getElementById('setting-stt'); if (sttEl) sttEl.checked = !!this.settings.stt;
     const rmEl = document.getElementById('setting-reduce-motion'); if (rmEl) rmEl.checked = !!this.settings.reduceMotion;
     const dsEl = document.getElementById('setting-dialogue-scale'); if (dsEl) dsEl.value = this.settings.dialogueScale;
+    const sfxEl = document.getElementById('setting-sfx-vol'); if (sfxEl) sfxEl.value = this.settings.sfxVolume;
+    const musEl = document.getElementById('setting-music-vol'); if (musEl) musEl.value = this.settings.musicVolume;
     const btn = document.getElementById('setting-enter-edit');
     if (btn) btn.onclick = () => this.enterEditMode();
     const exitBtn = document.getElementById('setting-exit-edit');
@@ -2328,6 +2131,8 @@ Respond with only a JSON object: {"bond_change": number, "reason": "A brief expl
     const sttEl = document.getElementById('setting-stt');
     const rmEl = document.getElementById('setting-reduce-motion');
     const dsEl = document.getElementById('setting-dialogue-scale');
+    const sfxEl = document.getElementById('setting-sfx-vol');
+    const musEl = document.getElementById('setting-music-vol');
     
     // Check if in text-only mode and warn user
     if (this.textOnlyMode && ((ttsEl && ttsEl.checked) || (sttEl && sttEl.checked))) {
@@ -2341,6 +2146,9 @@ Respond with only a JSON object: {"bond_change": number, "reason": "A brief expl
     this.settings.reduceMotion = !!(rmEl && rmEl.checked);
     const scale = parseFloat(dsEl && dsEl.value ? dsEl.value : '1');
     this.settings.dialogueScale = isNaN(scale) ? 1 : Math.max(0.9, Math.min(1.6, scale));
+    this.settings.sfxVolume = parseFloat(sfxEl ? sfxEl.value : '0.9');
+    this.settings.musicVolume = parseInt(musEl ? musEl.value : '50', 10);
+
     localStorage.setItem('npcTherapySettings', JSON.stringify(this.settings));
     this.applySettings();
     this.updateSpeechButtonVisibility();
@@ -2366,13 +2174,15 @@ Respond with only a JSON object: {"bond_change": number, "reason": "A brief expl
     this.toast('Settings saved.');
   },
   resetSettings() {
-    this.settings = { tts: true, stt: false, reduceMotion: false, dialogueScale: 1 };
+    this.settings = { tts: true, stt: false, reduceMotion: false, dialogueScale: 1, sfxVolume: 0.9, musicVolume: 50 };
     localStorage.setItem('npcTherapySettings', JSON.stringify(this.settings));
     this.applySettings();
     const ttsEl = document.getElementById('setting-tts'); if (ttsEl) ttsEl.checked = true;
     const sttEl = document.getElementById('setting-stt'); if (sttEl) sttEl.checked = false;
     const rmEl = document.getElementById('setting-reduce-motion'); if (rmEl) rmEl.checked = false;
     const dsEl = document.getElementById('setting-dialogue-scale'); if (dsEl) dsEl.value = 1;
+    const sfxEl = document.getElementById('setting-sfx-vol'); if (sfxEl) sfxEl.value = 0.9;
+    const musEl = document.getElementById('setting-music-vol'); if (musEl) musEl.value = 50;
     this.updateSpeechButtonVisibility();
     this.toast('Settings reset.');
   },
@@ -2383,13 +2193,15 @@ Respond with only a JSON object: {"bond_change": number, "reason": "A brief expl
         const parsed = JSON.parse(raw);
         this.settings = {
           tts: parsed.tts !== false,
-          stt: parsed.stt === true, // Explicitly default to false unless explicitly enabled
+          stt: parsed.stt === true,
           reduceMotion: !!parsed.reduceMotion,
           dialogueScale: typeof parsed.dialogueScale === 'number' ? parsed.dialogueScale : 1,
+          sfxVolume: typeof parsed.sfxVolume === 'number' ? parsed.sfxVolume : 0.9,
+          musicVolume: typeof parsed.musicVolume === 'number' ? parsed.musicVolume : 50,
         };
       } else {
         // First time - set default settings with STT disabled
-        this.settings = { tts: true, stt: false, reduceMotion: false, dialogueScale: 1 };
+        this.settings = { tts: true, stt: false, reduceMotion: false, dialogueScale: 1, sfxVolume: 0.9, musicVolume: 50 };
         localStorage.setItem('npcTherapySettings', JSON.stringify(this.settings));
       }
     } catch (_) { /* ignore */ }
@@ -2410,6 +2222,10 @@ Respond with only a JSON object: {"bond_change": number, "reason": "A brief expl
   },
   applySettings() {
     document.documentElement.style.setProperty('--dialogue-scale', String(this.settings.dialogueScale || 1));
+    if (this.audioPlayer) this.audioPlayer.setVolume(this.settings.sfxVolume);
+    if (this.ytPlayer && typeof this.ytPlayer.setVolume === 'function') {
+      this.ytPlayer.setVolume(this.settings.musicVolume);
+    }
     this.updateSpeechButtonVisibility();
   },
 
@@ -2757,13 +2573,13 @@ Respond with only a JSON object: {"bond_change": number, "reason": "A brief expl
     try {
       const raw = document.getElementById('json-npc-input')?.value || '';
       const data = JSON.parse(raw);
-      const name = String(data.name || '').trim();
-      const origin = String(data.origin || '').trim();
-      const crisis = String(data.crisis || '').trim();
+      const name = sanitizeInput(String(data.name || '').trim());
+      const origin = sanitizeInput(String(data.origin || '').trim());
+      const crisis = sanitizeInput(String(data.crisis || '').trim());
       if (!name || !origin || !crisis) { this.toast('JSON must include name, origin, crisis.'); return; }
       const npcFile = document.getElementById('json-npc-image-upload')?.files?.[0];
       const cardFile = document.getElementById('json-card-image-upload')?.files?.[0];
-      this.showLoader();
+      this.showLoader("Importing...");
       Promise.resolve().then(async () => {
         let uploadedNpcUrl = null, uploadedCardUrl = null;
         try { if (npcFile) uploadedNpcUrl = await websim.upload(npcFile); } catch(_) { this.toast('NPC image upload failed.'); }
@@ -2800,12 +2616,12 @@ Respond with only a JSON object: {"bond_change": number, "reason": "A brief expl
   async saveNpcEdit() {
     const idx = this.editingNpcIndex; if (idx == null) return;
     const npc = this.npcs[idx];
-    const name = document.getElementById('npc-edit-name').value.trim();
-    const origin = document.getElementById('npc-edit-origin').value.trim();
-    const crisis = document.getElementById('npc-edit-crisis').value.trim();
+    const name = sanitizeInput(document.getElementById('npc-edit-name').value.trim());
+    const origin = sanitizeInput(document.getElementById('npc-edit-origin').value.trim());
+    const crisis = sanitizeInput(document.getElementById('npc-edit-crisis').value.trim());
     const habFile = document.getElementById('npc-edit-habitat-upload').files[0];
     const offFile = document.getElementById('npc-edit-office-upload').files[0];
-    this.showLoader();
+    this.showLoader("Saving...");
     try {
       let habitatUrl = npc.habitat, officeUrl = npc.officeImage;
       if (habFile) { try { habitatUrl = await websim.upload(habFile); } catch(_) { this.toast('Main image upload failed.'); } }
