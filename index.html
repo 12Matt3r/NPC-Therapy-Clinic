@@ -369,9 +369,20 @@
                 </label>
             </div>
             <div class="settings-group">
+                <label for="setting-auto-send" class="settings-label">
+                    <input type="checkbox" id="setting-auto-send"> Auto-Send Speech (Hands-Free)
+                </label>
+                <div class="settings-hint">Automatically sends message when you stop speaking.</div>
+            </div>
+            <div class="settings-group">
                 <label for="setting-reduce-motion" class="settings-label">
                     <input type="checkbox" id="setting-reduce-motion"> Reduce Motion (disable typewriter)
                 </label>
+            </div>
+            <div class="settings-group">
+                <label for="setting-typing-speed" class="settings-label">Typing Speed</label>
+                <input type="range" id="setting-typing-speed" min="5" max="50" step="5" style="direction: rtl">
+                <div class="settings-hint">Fast &larr; &rarr; Slow</div>
             </div>
             <div class="settings-group">
                 <label for="setting-sfx-vol" class="settings-label">SFX Volume</label>

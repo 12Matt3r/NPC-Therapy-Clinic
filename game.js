@@ -54,7 +54,7 @@ const game = {
   generatingResponse: false,
   _menuRenderScheduled: false,
   _skipTyping: false,
-  settings: { tts: true, stt: false, reduceMotion: false, dialogueScale: 1, sfxVolume: 0.9, musicVolume: 50 },
+  settings: { tts: true, stt: false, autoSend: false, reduceMotion: false, dialogueScale: 1, sfxVolume: 0.9, musicVolume: 50, typingSpeed: 24 },
   _autosaveTimer: null,
   room: null,
   // Add: per-NPC session notes with breakthrough flag
@@ -138,6 +138,7 @@ const game = {
       return await this.fallbackBrowserTTS(text);
     } catch (error) {
       console.warn('Websim TTS failed, falling back to browser TTS:', error);
+      this.toast('TTS Error: Falling back to browser speech.');
       return await this.fallbackBrowserTTS(text);
     }
   },
@@ -168,6 +169,7 @@ const game = {
       return { url: null };
     } catch (error) {
       console.warn('Browser TTS also failed:', error);
+      this.toast('Speech failed completely.');
       return { url: null };
     }
   },
@@ -514,6 +516,16 @@ const game = {
           micButton.style.background = '#e74c3c';
           micButton.innerHTML = '🔴';
         }
+        if (finalTranscript && this.settings.autoSend) {
+          input.value = finalTranscript;
+          // Small delay to let user see text
+          setTimeout(() => {
+            if (input.value === finalTranscript) { // Check if hasn't changed
+              this.sendPlayerResponse();
+              this.stopSpeechRecognition();
+            }
+          }, 1200);
+        }
       },
       // onError
       (error) => {
@@ -573,10 +585,29 @@ const game = {
   },
 
   showScreen(screenId) {
-    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    const current = document.querySelector('.screen.active');
     const target = document.getElementById(screenId);
     if (!target) { console.warn(`showScreen: Screen with id "${screenId}" not found.`); return; }
+
+    // Prevent re-triggering if already on screen
+    if (current === target) return;
+
+    if (current) {
+      current.classList.add('fading-out');
+      setTimeout(() => {
+        current.classList.remove('active', 'fading-out');
+      }, 300);
+    }
+
+    // Slight delay to allow fade-out to start feeling right, or instant overlap
+    // Simple Crossfade: show new one immediately (it has opacity 0 -> 1 transition)
     target.classList.add('active');
+    // Ensure opacity transition plays by forcing a reflow or relying on CSS animation
+    // The CSS .screen.active has transition: opacity.
+    // If we want a clean sequence:
+    // 1. Current fade out
+    // 2. New fade in
+
     if (screenId === 'main-menu') document.getElementById('menu-search')?.focus();
     if (screenId === 'therapy-session') {
       document.getElementById('player-response')?.focus();
@@ -824,6 +855,7 @@ const game = {
       
     } catch (error) {
       console.warn('Web Speech TTS failed:', error);
+      this.toast('Browser Speech failed.');
       return false;
     }
   },
@@ -883,6 +915,7 @@ const game = {
       });
     } catch (error) {
       console.error("AI generation failed, using fallback.", error);
+      this.toast('AI Response Error. Using fallback.');
       const fallbackText = "I... I don't know what to say. The static is loud today.";
       this.conversationHistory.push({ role: 'assistant', content: fallbackText });
       // Only speak if TTS is enabled and not in text-only mode
@@ -986,6 +1019,7 @@ const game = {
         });
     } catch (e) {
         console.error(e);
+        this.toast('Association failed.');
         this.wordAssociationMode = false;
         this.typewriter(dialogueText, "I... I can't do this right now.");
     }
@@ -1085,6 +1119,7 @@ Provide a brief, one-paragraph therapeutic analysis connecting their interpretat
       
     } catch (error) {
       console.error("Failed to analyze patient response:", error);
+      this.toast('Analysis failed.');
       analysisContainer.textContent = 'Analysis could not be completed at this time.';
     }
   },
@@ -1092,7 +1127,7 @@ Provide a brief, one-paragraph therapeutic analysis connecting their interpretat
   typewriter(element, text, callback) {
     let i = 0; element.textContent = '';
     const prefersReduce = this.settings.reduceMotion || (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
-    const speed = prefersReduce ? 0 : 24;
+    const speed = prefersReduce ? 0 : (this.settings.typingSpeed || 24);
     if (speed === 0 || this._skipTyping) { this._skipTyping = false; element.textContent = text; if (callback) callback(); return; }
     function type() {
       if (game._skipTyping) { game._skipTyping = false; element.textContent = text; if (callback) callback(); return; }
@@ -1482,6 +1517,12 @@ Example: {"breakthrough": true, "summary": "The patient has accepted that their 
         const dx = (e.clientX - this.mapState.lastX) / this.mapState.zoom;
         const dy = (e.clientY - this.mapState.lastY) / this.mapState.zoom;
         this.mapState.panX += dx; this.mapState.panY += dy;
+
+        // Clamp bounds (approx +/- 1000px)
+        const limit = 1000;
+        this.mapState.panX = Math.max(-limit, Math.min(limit, this.mapState.panX));
+        this.mapState.panY = Math.max(-limit, Math.min(limit, this.mapState.panY));
+
         this.mapState.lastX = e.clientX; this.mapState.lastY = e.clientY;
         this.scheduleRenderConnectionMap();
       }
@@ -1500,7 +1541,9 @@ Example: {"breakthrough": true, "summary": "The patient has accepted that their 
         tooltip.style.display = 'block';
         tooltip.style.left = `${e.clientX + 15}px`;
         tooltip.style.top = `${e.clientY + 15}px`;
-        tooltip.textContent = hoveredNode.npc.name;
+
+        const status = hoveredNode.healed ? '<span style="color:#4CAF50">● Healed</span>' : '<span style="color:#ccc">○ Session Available</span>';
+        tooltip.innerHTML = `<strong>${hoveredNode.npc.name}</strong><br><small>${status}</small>`;
       } else { tooltip.style.display = 'none'; }
     }, { passive: true });
     canvas.addEventListener('mousedown', (e) => { this.mapState.isPanning = true; this.mapState.lastX = e.clientX; this.mapState.lastY = e.clientY; });
@@ -2077,7 +2120,9 @@ Respond with only a JSON object: {"bond_change": number, "reason": "A brief expl
     // Sync current values
     const ttsEl = document.getElementById('setting-tts'); if (ttsEl) ttsEl.checked = !!this.settings.tts;
     const sttEl = document.getElementById('setting-stt'); if (sttEl) sttEl.checked = !!this.settings.stt;
+    const autoSendEl = document.getElementById('setting-auto-send'); if (autoSendEl) autoSendEl.checked = !!this.settings.autoSend;
     const rmEl = document.getElementById('setting-reduce-motion'); if (rmEl) rmEl.checked = !!this.settings.reduceMotion;
+    const tsEl = document.getElementById('setting-typing-speed'); if (tsEl) tsEl.value = this.settings.typingSpeed;
     const dsEl = document.getElementById('setting-dialogue-scale'); if (dsEl) dsEl.value = this.settings.dialogueScale;
     const sfxEl = document.getElementById('setting-sfx-vol'); if (sfxEl) sfxEl.value = this.settings.sfxVolume;
     const musEl = document.getElementById('setting-music-vol'); if (musEl) musEl.value = this.settings.musicVolume;
@@ -2129,7 +2174,9 @@ Respond with only a JSON object: {"bond_change": number, "reason": "A brief expl
   saveSettings() {
     const ttsEl = document.getElementById('setting-tts');
     const sttEl = document.getElementById('setting-stt');
+    const autoSendEl = document.getElementById('setting-auto-send');
     const rmEl = document.getElementById('setting-reduce-motion');
+    const tsEl = document.getElementById('setting-typing-speed');
     const dsEl = document.getElementById('setting-dialogue-scale');
     const sfxEl = document.getElementById('setting-sfx-vol');
     const musEl = document.getElementById('setting-music-vol');
@@ -2143,9 +2190,11 @@ Respond with only a JSON object: {"bond_change": number, "reason": "A brief expl
     
     this.settings.tts = !!(ttsEl && ttsEl.checked);
     this.settings.stt = !!(sttEl && sttEl.checked);
+    this.settings.autoSend = !!(autoSendEl && autoSendEl.checked);
     this.settings.reduceMotion = !!(rmEl && rmEl.checked);
     const scale = parseFloat(dsEl && dsEl.value ? dsEl.value : '1');
     this.settings.dialogueScale = isNaN(scale) ? 1 : Math.max(0.9, Math.min(1.6, scale));
+    this.settings.typingSpeed = parseInt(tsEl ? tsEl.value : '24', 10);
     this.settings.sfxVolume = parseFloat(sfxEl ? sfxEl.value : '0.9');
     this.settings.musicVolume = parseInt(musEl ? musEl.value : '50', 10);
 
@@ -2174,13 +2223,15 @@ Respond with only a JSON object: {"bond_change": number, "reason": "A brief expl
     this.toast('Settings saved.');
   },
   resetSettings() {
-    this.settings = { tts: true, stt: false, reduceMotion: false, dialogueScale: 1, sfxVolume: 0.9, musicVolume: 50 };
+    this.settings = { tts: true, stt: false, autoSend: false, reduceMotion: false, dialogueScale: 1, sfxVolume: 0.9, musicVolume: 50, typingSpeed: 24 };
     localStorage.setItem('npcTherapySettings', JSON.stringify(this.settings));
     this.applySettings();
     const ttsEl = document.getElementById('setting-tts'); if (ttsEl) ttsEl.checked = true;
     const sttEl = document.getElementById('setting-stt'); if (sttEl) sttEl.checked = false;
+    const autoSendEl = document.getElementById('setting-auto-send'); if (autoSendEl) autoSendEl.checked = false;
     const rmEl = document.getElementById('setting-reduce-motion'); if (rmEl) rmEl.checked = false;
     const dsEl = document.getElementById('setting-dialogue-scale'); if (dsEl) dsEl.value = 1;
+    const tsEl = document.getElementById('setting-typing-speed'); if (tsEl) tsEl.value = 24;
     const sfxEl = document.getElementById('setting-sfx-vol'); if (sfxEl) sfxEl.value = 0.9;
     const musEl = document.getElementById('setting-music-vol'); if (musEl) musEl.value = 50;
     this.updateSpeechButtonVisibility();
@@ -2194,14 +2245,16 @@ Respond with only a JSON object: {"bond_change": number, "reason": "A brief expl
         this.settings = {
           tts: parsed.tts !== false,
           stt: parsed.stt === true,
+          autoSend: parsed.autoSend === true,
           reduceMotion: !!parsed.reduceMotion,
           dialogueScale: typeof parsed.dialogueScale === 'number' ? parsed.dialogueScale : 1,
           sfxVolume: typeof parsed.sfxVolume === 'number' ? parsed.sfxVolume : 0.9,
           musicVolume: typeof parsed.musicVolume === 'number' ? parsed.musicVolume : 50,
+          typingSpeed: typeof parsed.typingSpeed === 'number' ? parsed.typingSpeed : 24,
         };
       } else {
         // First time - set default settings with STT disabled
-        this.settings = { tts: true, stt: false, reduceMotion: false, dialogueScale: 1, sfxVolume: 0.9, musicVolume: 50 };
+        this.settings = { tts: true, stt: false, autoSend: false, reduceMotion: false, dialogueScale: 1, sfxVolume: 0.9, musicVolume: 50, typingSpeed: 24 };
         localStorage.setItem('npcTherapySettings', JSON.stringify(this.settings));
       }
     } catch (_) { /* ignore */ }
